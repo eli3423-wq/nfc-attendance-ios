@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="נוכחות NFC">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon.svg">
+  <title>נוכחות NFC</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      background: #111; color: #f4f4f4;
+      display: flex; justify-content: center; align-items: flex-start;
+      padding: max(24px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
+    }
+    main { width: 100%; max-width: 560px; text-align: center; }
+    h1 { font-size: 40px; margin: 20px 0 10px; }
+    h2 { font-size: 28px; margin: 26px 0 16px; }
+    .card {
+      background: #1a1a1a; border: 1px solid #333; border-radius: 18px;
+      padding: 22px; margin-top: 18px;
+    }
+    input, button {
+      width: 100%; font-size: 20px; padding: 16px;
+      border-radius: 12px; margin: 8px 0;
+    }
+    input { background: #2a2a2a; color: #fff; border: 1px solid #555; text-align: right; }
+    button { background: #b57cff; color: #161016; border: 0; font-weight: 700; cursor: pointer; }
+    .secondary { background: transparent; color: #c99cff; border: 1px solid #444; }
+    .muted { color: #b6b6b6; font-size: 18px; line-height: 1.5; }
+    .status { font-size: 28px; font-weight: 800; margin: 24px 0 10px; }
+    .ok { color: #f4f4f4; }
+    .err { color: #ff8b8b; font-weight: 700; line-height: 1.5; }
+    .building { font-size: 24px; font-weight: 700; margin-top: 10px; }
+    .small { font-size: 15px; color: #999; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>נוכחות NFC</h1>
+  <div id="app" class="card">טוען...</div>
+</main>
+
+<script>
+const API = "https://ljchizqwaqleaouyyglq.supabase.co/functions/v1/web-attendance";
+const params = new URLSearchParams(location.search);
+const TAG = (params.get("tag") || "").trim();
+const app = document.getElementById("app");
+const TOKEN_KEY = "ags_device_token";
+const NAME_KEY = "ags_employee_name";
+
+async function post(body) {
+  const r = await fetch(API, {
+    method: "POST",
+    headers: {"content-type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  let data;
+  try { data = await r.json(); }
+  catch { throw new Error("השרת החזיר תשובה לא תקינה."); }
+  if (!r.ok && !data?.message) throw new Error("שגיאת שרת " + r.status);
+  return data;
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
+  })[c]);
+}
+
+function activation() {
+  app.innerHTML = `
+    <h2>הפעלה חד־פעמית</h2>
+    <p class="muted">מכניסים פעם אחת מספר טלפון וקוד שקיבלתם מהמעסיק.</p>
+    <input id="phone" inputmode="tel" autocomplete="tel" placeholder="מספר טלפון">
+    <input id="pin" inputmode="numeric" autocomplete="one-time-code" placeholder="קוד הפעלה">
+    <button id="go">הפעלת המכשיר</button>
+    <div id="msg"></div>`;
+  document.getElementById("go").onclick = async () => {
+    const msg = document.getElementById("msg");
+    msg.innerHTML = '<p class="muted">מפעיל...</p>';
+    try {
+      const x = await post({
+        action:"activate",
+        phone:document.getElementById("phone").value,
+        pin:document.getElementById("pin").value
+      });
+      if (!x.ok) {
+        msg.innerHTML = `<p class="err">${esc(x.message || "שגיאה בהפעלה")}</p>`;
+        return;
+      }
+      localStorage.setItem(TOKEN_KEY, x.device_token);
+      localStorage.setItem(NAME_KEY, x.employee_name || "");
+      await scan();
+    } catch (e) {
+      msg.innerHTML = `<p class="err">${esc(e.message || e)}</p>`;
+    }
+  };
+}
+
+function ready() {
+  const name = localStorage.getItem(NAME_KEY) || "";
+  app.innerHTML = `
+    <p class="muted">עובד: <b>${esc(name)}</b></p>
+    <div class="status">מוכן להחתמה</div>
+    <p class="muted">הצמד את האייפון למדבקת NFC בבניין.</p>
+    <button class="secondary" onclick="location.reload()">רענון</button>`;
+}
+
+async function scan() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) { activation(); return; }
+  if (!TAG) { ready(); return; }
+
+  app.innerHTML = '<p class="muted">רושם החתמה...</p>';
+  try {
+    const x = await post({action:"scan", device_token:token, tag:TAG});
+    if (!x.ok) {
+      if ((x.message || "").includes("אינו מורשה")) {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(NAME_KEY);
+        activation();
+        return;
+      }
+      app.innerHTML = `<p class="err">${esc(x.message || "שגיאה")}</p>`;
+      return;
+    }
+    let title = "✓ כניסה נרשמה";
+    if (x.action === "out") title = "✓ יציאה נרשמה";
+    if (x.action === "duplicate") title = "✓ ההצמדה כבר נקלטה";
+    if (x.action === "switch") title = "✓ נרשמה כניסה לבניין החדש";
+
+    app.innerHTML = `
+      <p class="muted">עובד: <b>${esc(localStorage.getItem(NAME_KEY) || "")}</b></p>
+      <div class="status ok">${title}</div>
+      <div class="building">${esc(x.building_name || "")}</div>
+      <p class="small">אפשר לסגור את המסך.</p>`;
+  } catch (e) {
+    app.innerHTML = `<p class="err">${esc(e.message || e)}</p>`;
+  }
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
+}
+scan();
+</script>
+</body>
+</html>
