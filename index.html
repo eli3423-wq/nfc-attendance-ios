@@ -49,9 +49,12 @@
 </main>
 
 <script>
-const API = "https://ljchizqwaqleaouyyglq.supabase.co/functions/v1/web-attendance";
+const SUPABASE_URL = "https://ljchizqwaqleaouyyglq.supabase.co";
+const ANON_KEY = "sb_publishable_Sh9iD3PZEqtgwiVqLveFjA_4t5zeQRa";
+const API = SUPABASE_URL + "/functions/v1/web-attendance";
 const params = new URLSearchParams(location.search);
 const TAG = (params.get("tag") || "").trim();
+const ACTIVATE = (params.get("activate") || "").trim();
 const app = document.getElementById("app");
 const TOKEN_KEY = "ags_device_token";
 const NAME_KEY = "ags_employee_name";
@@ -73,6 +76,31 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({
     "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
   })[c]);
+}
+
+async function activateByLink() {
+  if (!ACTIVATE) return false;
+  app.innerHTML = '<p class="muted">מפעיל את המכשיר...</p>';
+  try {
+    const r = await fetch(SUPABASE_URL + "/rest/v1/rpc/activate_employee_link", {
+      method: "POST",
+      headers: {"content-type":"application/json", "apikey":ANON_KEY},
+      body: JSON.stringify({p_token: ACTIVATE})
+    });
+    const x = await r.json();
+    if (!x.ok || !x.device_token) {
+      app.innerHTML = `<p class="err">${esc(x.message || "קישור ההפעלה אינו תקין")}</p>`;
+      return true;
+    }
+    localStorage.setItem(TOKEN_KEY, x.device_token);
+    localStorage.setItem(NAME_KEY, x.employee_name || "");
+    history.replaceState({}, "", location.pathname);
+    ready();
+    return true;
+  } catch (e) {
+    app.innerHTML = `<p class="err">${esc(e.message || e)}</p>`;
+    return true;
+  }
 }
 
 function activation() {
@@ -150,7 +178,13 @@ async function scan() {
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
-scan();
+(async () => {
+  if (!localStorage.getItem(TOKEN_KEY) && ACTIVATE) {
+    await activateByLink();
+  } else {
+    scan();
+  }
+})();
 </script>
 </body>
 </html>
